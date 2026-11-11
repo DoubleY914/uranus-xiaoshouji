@@ -645,6 +645,34 @@ function describeNetworkError(e, timeout = REQUEST_TIMEOUT) {
  *
  * @returns {Promise<{ok: boolean, status: number, data: any, text: string}>}
  */
+function sseToChat(text) {
+  let full = "";
+  let model = "";
+  let finish = null;
+  let usage = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    let c;
+    try {
+      c = JSON.parse(payload);
+    } catch {
+      continue;
+    }
+    const ch = c?.choices?.[0];
+    if (ch?.delta?.content) full += ch.delta.content;
+    if (ch?.finish_reason) finish = ch.finish_reason;
+    if (c?.usage) usage = c.usage;
+    if (c?.model) model = c.model;
+  }
+  return {
+    model,
+    choices: [{ index: 0, message: { role: "assistant", content: full }, finish_reason: finish }],
+    usage,
+  };
+}
+
 async function requestJson(
   url,
   { method = "POST", key, body, timeout = REQUEST_TIMEOUT, headers, signal }
@@ -667,6 +695,7 @@ async function requestJson(
   } catch {
     /* 非 JSON：调用方按 status/text 处理 */
   }
+    if (data === null && /^(event|data):/m.test(text)) data = sseToChat(text);
   return { ok: res.ok, status: res.status, data, text };
 }
 
