@@ -732,19 +732,25 @@ async function requestStream(
     return { ok: false, status: res.status, data, text };
   }
 
-  const kind = String(res.headers.get("content-type") ?? "");
+    const kind = String(res.headers.get("content-type") ?? "");
+  let sseText = null;
   if (!/event-stream/i.test(kind)) {
-    // 「跟随模型」：上游没给流，那就当普通 JSON 收下。一个字都不丢
     const text = await res.text();
-    let data = null;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      /* 非 JSON 也非 SSE：交给调用方按 text 报错 */
+    // 站子返回的是 SSE，只是响应头写错了：照样按流解析
+    if (/^(event|data):/m.test(text)) {
+      sseText = text;
+    } else {
+      let data = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        /* 非 JSON 也非 SSE：交给调用方按 text 报错 */
+      }
+      logDebug("LLM", `上游没回流式（Content-Type: ${kind || "空"}），这轮当整段收下`);
+      return { ok: true, status: res.status, data, text };
     }
-    logDebug("LLM", `上游没回流式（Content-Type: ${kind || "空"}），这轮当整段收下`);
-    return { ok: true, status: res.status, data, text };
   }
+
 
   let full = "";
   let usage = null;
@@ -754,7 +760,7 @@ async function requestStream(
   let errorStatus = 200;
   let blocked = null;
 
-  await readSse(res, (payload) => {
+    await readSse(sseText !== null ? new Response(sseText) : res, (payload) => {
     if (payload === "[DONE]") return true;
     let chunk;
     try {
